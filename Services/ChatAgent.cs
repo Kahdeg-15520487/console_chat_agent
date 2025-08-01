@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using LocalChatAgent.Models;
 using LocalChatAgent.Tools;
@@ -22,12 +25,27 @@ namespace LocalChatAgent.Services
             _config = config;
             _conversationHistory = new List<ChatMessage>();
             
-            // Add system message
+            // Add system message with dynamic tool descriptions
+            var systemPrompt = BuildSystemPrompt();
             _conversationHistory.Add(new ChatMessage
             {
                 Role = "system",
-                Content = "You are a helpful AI assistant with access to tools. When you need to search for current information, use the web_search tool. When you need to perform calculations, use the calculator tool. Always be helpful and informative."
+                Content = systemPrompt
             });
+        }
+
+        private string BuildSystemPrompt()
+        {
+            var basePrompt = "You are a helpful AI assistant with access to tools. Be concise and direct in your responses. Do not use markdown formatting, bullet points, or special formatting. Respond in plain text only.";
+            
+            var availableTools = _toolManager.GetAvailableTools();
+            if (availableTools.Any())
+            {
+                var toolDescriptions = availableTools.Select(tool => $"use the {tool.Function.Name} tool for {tool.Function.Description.ToLower()}");
+                basePrompt += $" When needed, {string.Join(", ", toolDescriptions)}.";
+            }
+            
+            return basePrompt;
         }
 
         public async Task<string> SendMessageAsync(string userMessage)
@@ -77,6 +95,73 @@ namespace LocalChatAgent.Services
             catch (Exception ex)
             {
                 return $"Error: {ex.Message}";
+            }
+        }
+
+        public async IAsyncEnumerable<string> SendMessageStreamAsync(string userMessage, 
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await foreach (var chunk in SendMessageStreamInternalAsync(userMessage, cancellationToken))
+            {
+                yield return chunk;
+            }
+        }
+
+        private async IAsyncEnumerable<string> SendMessageStreamInternalAsync(string userMessage, 
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            // Add user message to conversation history
+            _conversationHistory.Add(new ChatMessage
+            {
+                Role = "user",
+                Content = userMessage
+            });
+
+            // Create the request (streaming doesn't support tool calls in most implementations)
+            var request = new ChatRequest
+            {
+                Model = _config.Model,
+                Messages = _conversationHistory.ToList(),
+                MaxTokens = _config.MaxTokens,
+                Temperature = _config.Temperature,
+                Stream = true
+                // Note: Tools are typically not supported with streaming
+            };
+
+            var responseContent = new StringBuilder();
+            
+            IAsyncEnumerable<string>? stream = null;
+            Exception? streamException = null;
+            
+            try
+            {
+                stream = _openAIClient.SendChatRequestStreamAsync(request, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                streamException = ex;
+            }
+
+            if (streamException != null)
+            {
+                yield return $"Error: {streamException.Message}";
+                yield break;
+            }
+
+            if (stream != null)
+            {
+                await foreach (var chunk in stream)
+                {
+                    responseContent.Append(chunk);
+                    yield return chunk;
+                }
+
+                // Add the complete assistant message to conversation history
+                _conversationHistory.Add(new ChatMessage
+                {
+                    Role = "assistant",
+                    Content = responseContent.ToString()
+                });
             }
         }
 
@@ -140,10 +225,11 @@ namespace LocalChatAgent.Services
         public void ClearHistory()
         {
             _conversationHistory.Clear();
+            var systemPrompt = BuildSystemPrompt();
             _conversationHistory.Add(new ChatMessage
             {
                 Role = "system",
-                Content = "You are a helpful AI assistant with access to tools. When you need to search for current information, use the web_search tool. When you need to perform calculations, use the calculator tool. Always be helpful and informative."
+                Content = systemPrompt
             });
         }
 

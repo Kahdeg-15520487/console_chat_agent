@@ -109,6 +109,7 @@ namespace LocalChatAgent.Tools
                 response.EnsureSuccessStatusCode();
 
                 var html = await response.Content.ReadAsStringAsync();
+                Console.WriteLine(html);
                 var doc = new HtmlDocument();
                 doc.LoadHtml(html);
 
@@ -168,6 +169,8 @@ namespace LocalChatAgent.Tools
                 ExtractTextContent(contentContainer, result, includeLinks);
 
                 var text = result.ToString();
+
+                Console.WriteLine(text);
 
                 // Truncate if necessary
                 if (text.Length > maxLength)

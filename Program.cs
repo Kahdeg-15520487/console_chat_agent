@@ -12,6 +12,7 @@ namespace LocalChatAgent
     {
         private static ApiConfig? _apiConfig;
         private static ChatAgent? _chatAgent;
+        private static bool _useStreaming = false;
 
         static async Task Main(string[] args)
         {
@@ -135,10 +136,11 @@ namespace LocalChatAgent
         private static void DisplayHelp()
         {
             Console.WriteLine("Commands:");
-            Console.WriteLine("  /help     - Show this help message");
-            Console.WriteLine("  /clear    - Clear conversation history");
-            Console.WriteLine("  /history  - Show conversation history");
-            Console.WriteLine("  /exit     - Exit the application");
+            Console.WriteLine("  /help      - Show this help message");
+            Console.WriteLine("  /clear     - Clear conversation history");
+            Console.WriteLine("  /history   - Show conversation history");
+            Console.WriteLine("  /stream    - Toggle streaming mode (current: " + (_useStreaming ? "ON" : "OFF") + ")");
+            Console.WriteLine("  /exit      - Exit the application");
             Console.WriteLine();
             Console.WriteLine("You can ask questions and the agent will use tools when needed.");
             Console.WriteLine("Example: 'What's the weather like today?' or 'Calculate 15 * 23 + 47'");
@@ -192,9 +194,24 @@ namespace LocalChatAgent
                 try
                 {
                     Console.Write("Assistant: ");
-                    var response = await _chatAgent.SendMessageAsync(input);
-                    Console.WriteLine(response);
-                    Console.WriteLine();
+                    
+                    if (_useStreaming)
+                    {
+                        // Use streaming response
+                        await foreach (var chunk in _chatAgent.SendMessageStreamAsync(input))
+                        {
+                            Console.Write(chunk);
+                        }
+                        Console.WriteLine();
+                        Console.WriteLine();
+                    }
+                    else
+                    {
+                        // Use regular response
+                        var response = await _chatAgent.SendMessageAsync(input);
+                        Console.WriteLine(response);
+                        Console.WriteLine();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -239,6 +256,16 @@ namespace LocalChatAgent
                                 Console.WriteLine($"  [Tool Call: {toolCall.Function.Name}]");
                             }
                         }
+                    }
+                    Console.WriteLine();
+                    return Task.FromResult(false);
+
+                case "/stream":
+                    _useStreaming = !_useStreaming;
+                    Console.WriteLine($"Streaming mode is now {(_useStreaming ? "ON" : "OFF")}");
+                    if (_useStreaming)
+                    {
+                        Console.WriteLine("Note: Tool calls are not supported in streaming mode.");
                     }
                     Console.WriteLine();
                     return Task.FromResult(false);

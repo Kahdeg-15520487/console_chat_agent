@@ -5,6 +5,7 @@ A local console-based chat agent that connects to OpenAI-compatible APIs with to
 ## Features
 
 - **OpenAI-Compatible API Support**: Works with OpenAI API or any compatible endpoint (like Ollama, LM Studio, etc.)
+- **Real-time Streaming**: Support for streaming responses with real-time text generation
 - **Tool Use Capabilities**: Built-in support for function calling with tools
 - **Web Search**: Search the web for current information using Google Custom Search API or DuckDuckGo
 - **Web Page Fetching**: Fetch and convert web pages to clean, LLM-readable text format
@@ -120,7 +121,17 @@ This is the main content of the article...
 - `/help` - Show available commands
 - `/clear` - Clear conversation history
 - `/history` - Show conversation history
+- `/stream` - Toggle streaming mode ON/OFF
 - `/exit` or `/quit` - Exit the application
+
+### Streaming Mode
+
+The agent supports real-time streaming responses where text appears as it's generated, similar to ChatGPT's interface. 
+
+- Use `/stream` to toggle streaming mode on or off
+- In streaming mode, responses appear word by word in real-time
+- **Note**: Tool calls are not supported in streaming mode
+- Streaming works with any OpenAI-compatible API that supports the `stream: true` parameter
 
 ## Adding Custom Tools
 

@@ -32,6 +32,9 @@ namespace LocalChatAgent.Models
 
         [JsonPropertyName("tool_choice")]
         public string? ToolChoice { get; set; }
+
+        [JsonPropertyName("stream")]
+        public bool Stream { get; set; } = false;
     }
 
     public class ChatResponse
@@ -134,5 +137,48 @@ namespace LocalChatAgent.Models
 
         [JsonPropertyName("arguments")]
         public string Arguments { get; set; } = string.Empty;
+    }
+
+    // Streaming-specific models
+    public class ChatCompletionChunk
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = string.Empty;
+
+        [JsonPropertyName("object")]
+        public string Object { get; set; } = string.Empty;
+
+        [JsonPropertyName("created")]
+        public long Created { get; set; }
+
+        [JsonPropertyName("model")]
+        public string Model { get; set; } = string.Empty;
+
+        [JsonPropertyName("choices")]
+        public List<ChunkChoice> Choices { get; set; } = new();
+    }
+
+    public class ChunkChoice
+    {
+        [JsonPropertyName("index")]
+        public int Index { get; set; }
+
+        [JsonPropertyName("delta")]
+        public Delta Delta { get; set; } = new();
+
+        [JsonPropertyName("finish_reason")]
+        public string? FinishReason { get; set; }
+    }
+
+    public class Delta
+    {
+        [JsonPropertyName("role")]
+        public string? Role { get; set; }
+
+        [JsonPropertyName("content")]
+        public string? Content { get; set; }
+
+        [JsonPropertyName("tool_calls")]
+        public List<ToolCall>? ToolCalls { get; set; }
     }
 }
