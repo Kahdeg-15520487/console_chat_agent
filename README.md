@@ -7,6 +7,7 @@ A local console-based chat agent that connects to OpenAI-compatible APIs with to
 - **OpenAI-Compatible API Support**: Works with OpenAI API or any compatible endpoint (like Ollama, LM Studio, etc.)
 - **Tool Use Capabilities**: Built-in support for function calling with tools
 - **Web Search**: Search the web for current information using Google Custom Search API or DuckDuckGo
+- **Web Page Fetching**: Fetch and convert web pages to clean, LLM-readable text format
 - **Calculator**: Perform mathematical calculations
 - **Extensible Architecture**: Easy to add custom tools
 - **Conversation History**: Maintains context across interactions
@@ -98,6 +99,20 @@ Based on my search results, the current weather in New York is...
 You: Calculate 15 * 23 + 47
 Assistant: [Tool Call: calculator]
 Result: 15 * 23 + 47 = 392
+```
+
+```
+You: Please fetch the content from https://example.com/article
+Assistant: [Tool Call: web_fetch]
+I'll fetch the content from that webpage for you.
+
+Title: Example Article
+Description: This is an example article...
+
+Content:
+--------
+# Main Heading
+This is the main content of the article...
 ```
 
 ### Console Commands
@@ -193,6 +208,7 @@ LocalChatAgent/
 │   ├── IToolHandler.cs       # Tool interface
 │   ├── ToolManager.cs        # Tool registration and execution
 │   ├── WebSearchTool.cs      # Web search functionality
+│   ├── WebFetchTool.cs       # Web page content fetching
 │   └── CalculatorTool.cs     # Mathematical calculations
 ├── Program.cs                # Main console application
 ├── appsettings.json          # Configuration file

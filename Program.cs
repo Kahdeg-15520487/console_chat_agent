@@ -118,6 +118,7 @@ namespace LocalChatAgent
 
             // Register tools
             toolManager.RegisterTool(new WebSearchTool());
+            toolManager.RegisterTool(new WebFetchTool());
             toolManager.RegisterTool(new CalculatorTool());
 
             // Initialize chat agent
