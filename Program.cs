@@ -252,8 +252,17 @@ namespace LocalChatAgent
             toolManager.RegisterTool(new WebFetchTool());
             toolManager.RegisterTool(new CalculatorTool());
 
-            // Load character card if available
-            var characterCard = LoadCharacterCard();
+            // Load character card if available (skip if input is piped)
+            CharacterCard? characterCard = null;
+            if (!Console.IsInputRedirected)
+            {
+                characterCard = LoadCharacterCard();
+            }
+            else
+            {
+                Console.WriteLine("Input is piped - skipping character card loading for automated mode.");
+                Console.WriteLine();
+            }
 
             // Initialize session manager
             _sessionManager = new SessionManager();

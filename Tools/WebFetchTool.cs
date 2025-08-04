@@ -3,9 +3,9 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using HtmlAgilityPack;
 using LocalChatAgent.Models;
 using LocalChatAgent.Tools;
+using Textify;
 
 namespace LocalChatAgent.Tools
 {
@@ -14,7 +14,7 @@ namespace LocalChatAgent.Tools
         private readonly HttpClient _httpClient;
 
         public string Name => "web_fetch";
-        public string Description => "Fetch a webpage and convert it to clean, LLM-readable text format";
+        public string Description => "Fetch a webpage and convert it to clean, readable text format with basic markdown-like formatting";
 
         public WebFetchTool()
         {
@@ -42,13 +42,13 @@ namespace LocalChatAgent.Tools
                             url = new
                             {
                                 type = "string",
-                                description = "The URL of the webpage to fetch and convert to text"
+                                description = "The URL of the webpage to fetch and convert to readable text"
                             },
                             include_links = new
                             {
                                 type = "boolean",
-                                description = "Whether to include links in the output (default: false)",
-                                @default = false
+                                description = "Whether to include link references in the output (default: true)",
+                                @default = true
                             },
                             max_length = new
                             {
@@ -68,7 +68,7 @@ namespace LocalChatAgent.Tools
             try
             {
                 string url = parameters.GetProperty("url").GetString() ?? "";
-                bool includeLinks = false;
+                bool includeLinks = true;
                 int maxLength = 10000;
 
                 if (parameters.TryGetProperty("include_links", out var includeLinksProperty))
@@ -216,187 +216,58 @@ namespace LocalChatAgent.Tools
 
         private string ProcessHtmlContent(string htmlContent, bool includeLinks, int maxLength)
         {
-            var doc = new HtmlDocument();
-            doc.LoadHtml(htmlContent);
-
-            // Remove script and style elements
-            var scriptsAndStyles = doc.DocumentNode.SelectNodes("//script | //style | //noscript");
-            if (scriptsAndStyles != null)
+            try
             {
-                foreach (var node in scriptsAndStyles)
-                {
-                    node.Remove();
-                }
-            }
+                // Use Textify to convert HTML to text
+                var converter = new HtmlToTextConverter();
+                var textContent = converter.Convert(htmlContent);
 
+                // Clean up the text content
+                var cleanedContent = CleanTextContent(textContent);
+
+                // Truncate if necessary
+                if (cleanedContent.Length > maxLength)
+                {
+                    cleanedContent = cleanedContent.Substring(0, maxLength) + "... [Content truncated]";
+                }
+
+                return cleanedContent;
+            }
+            catch (Exception ex)
+            {
+                return $"Error processing HTML content: {ex.Message}";
+            }
+        }
+
+        private string CleanTextContent(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+                return string.Empty;
+
+            var lines = content.Split('\n', StringSplitOptions.None);
             var result = new StringBuilder();
+            var previousLineEmpty = false;
 
-            // Extract title
-            var titleNode = doc.DocumentNode.SelectSingleNode("//title");
-            if (titleNode != null)
+            foreach (var line in lines)
             {
-                result.AppendLine($"Title: {titleNode.InnerText.Trim()}");
-                result.AppendLine();
-            }
-
-            // Extract meta description
-            var metaDesc = doc.DocumentNode.SelectSingleNode("//meta[@name='description']");
-            if (metaDesc != null)
-            {
-                var description = metaDesc.GetAttributeValue("content", "");
-                if (!string.IsNullOrEmpty(description))
+                var trimmedLine = line.Trim();
+                
+                // Skip multiple consecutive empty lines (keep max 1 empty line)
+                if (string.IsNullOrEmpty(trimmedLine))
                 {
-                    result.AppendLine($"Description: {description.Trim()}");
-                    result.AppendLine();
+                    if (!previousLineEmpty)
+                    {
+                        result.AppendLine();
+                        previousLineEmpty = true;
+                    }
+                    continue;
                 }
+
+                result.AppendLine(line);
+                previousLineEmpty = false;
             }
 
-            // Extract main content
-            result.AppendLine("Content:");
-            result.AppendLine("--------");
-
-            // Try to find main content areas first
-            var mainContentNodes = doc.DocumentNode.SelectNodes(
-                "//main | //article | //div[@class*='content'] | //div[@id*='content'] | " +
-                "//div[@class*='article'] | //div[@id*='article'] | //section[@class*='content']");
-
-            HtmlNode contentContainer;
-            if (mainContentNodes != null && mainContentNodes.Count > 0)
-            {
-                // Use the first main content area found
-                contentContainer = mainContentNodes[0];
-            }
-            else
-            {
-                // Fall back to body if no main content area is found
-                contentContainer = doc.DocumentNode.SelectSingleNode("//body") ?? doc.DocumentNode;
-            }
-
-            ExtractTextContent(contentContainer, result, includeLinks);
-
-            var text = result.ToString();
-
-            Console.WriteLine(text);
-
-            // Truncate if necessary
-            if (text.Length > maxLength)
-            {
-                text = text.Substring(0, maxLength) + "... [Content truncated]";
-            }
-
-            return text;
-        }
-
-        private void ExtractTextContent(HtmlNode node, StringBuilder result, bool includeLinks)
-        {
-            if (node == null) return;
-
-            // Skip certain elements that typically don't contain useful content
-            var skipTags = new[] { "nav", "header", "footer", "aside", "advertisement", "ads" };
-            if (Array.Exists(skipTags, tag => string.Equals(node.Name, tag, StringComparison.OrdinalIgnoreCase)))
-            {
-                return;
-            }
-
-            // Handle different node types
-            switch (node.NodeType)
-            {
-                case HtmlNodeType.Text:
-                    var text = HtmlEntity.DeEntitize(node.InnerText).Trim();
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        result.Append(text + " ");
-                    }
-                    break;
-
-                case HtmlNodeType.Element:
-                    // Handle specific elements
-                    switch (node.Name.ToLower())
-                    {
-                        case "h1":
-                        case "h2":
-                        case "h3":
-                        case "h4":
-                        case "h5":
-                        case "h6":
-                            result.AppendLine();
-                            result.AppendLine($"{new string('#', int.Parse(node.Name.Substring(1)))} {node.InnerText.Trim()}");
-                            result.AppendLine();
-                            break;
-
-                        case "p":
-                            result.AppendLine();
-                            ExtractTextFromChildren(node, result, includeLinks);
-                            result.AppendLine();
-                            break;
-
-                        case "br":
-                            result.AppendLine();
-                            break;
-
-                        case "li":
-                            result.AppendLine();
-                            result.Append("• ");
-                            ExtractTextFromChildren(node, result, includeLinks);
-                            result.AppendLine();
-                            break;
-
-                        case "a":
-                            var linkText = node.InnerText.Trim();
-                            if (!string.IsNullOrEmpty(linkText))
-                            {
-                                if (includeLinks)
-                                {
-                                    var href = node.GetAttributeValue("href", "");
-                                    result.Append($"{linkText} ({href}) ");
-                                }
-                                else
-                                {
-                                    result.Append($"{linkText} ");
-                                }
-                            }
-                            break;
-
-                        case "img":
-                            if (includeLinks)
-                            {
-                                var alt = node.GetAttributeValue("alt", "");
-                                var src = node.GetAttributeValue("src", "");
-                                if (!string.IsNullOrEmpty(alt))
-                                {
-                                    result.Append($"[Image: {alt}] ");
-                                }
-                                else if (!string.IsNullOrEmpty(src))
-                                {
-                                    result.Append($"[Image: {src}] ");
-                                }
-                            }
-                            break;
-
-                        case "div":
-                        case "span":
-                        case "section":
-                        case "article":
-                        case "main":
-                            // For container elements, just process children
-                            ExtractTextFromChildren(node, result, includeLinks);
-                            break;
-
-                        default:
-                            // For other elements, extract text from children
-                            ExtractTextFromChildren(node, result, includeLinks);
-                            break;
-                    }
-                    break;
-            }
-        }
-
-        private void ExtractTextFromChildren(HtmlNode node, StringBuilder result, bool includeLinks)
-        {
-            foreach (var child in node.ChildNodes)
-            {
-                ExtractTextContent(child, result, includeLinks);
-            }
+            return result.ToString().Trim();
         }
 
         public void Dispose()
