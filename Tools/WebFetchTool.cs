@@ -108,77 +108,26 @@ namespace LocalChatAgent.Tools
                 var response = await _httpClient.GetAsync(url);
                 response.EnsureSuccessStatusCode();
 
-                var html = await response.Content.ReadAsStringAsync();
-                Console.WriteLine(html);
-                var doc = new HtmlDocument();
-                doc.LoadHtml(html);
+                var content = await response.Content.ReadAsStringAsync();
+                var contentType = response.Content.Headers.ContentType?.MediaType?.ToLower() ?? "";
 
-                // Remove script and style elements
-                var scriptsAndStyles = doc.DocumentNode.SelectNodes("//script | //style | //noscript");
-                if (scriptsAndStyles != null)
+                Console.WriteLine($"Content-Type: {contentType}");
+                Console.WriteLine(content);
+
+                // Handle different content types
+                if (contentType.Contains("application/json") || IsJsonContent(content))
                 {
-                    foreach (var node in scriptsAndStyles)
-                    {
-                        node.Remove();
-                    }
+                    return FormatJsonContent(content, maxLength);
                 }
-
-                var result = new StringBuilder();
-
-                // Extract title
-                var titleNode = doc.DocumentNode.SelectSingleNode("//title");
-                if (titleNode != null)
+                else if (contentType.Contains("text/plain") || IsPlainTextContent(contentType, content))
                 {
-                    result.AppendLine($"Title: {titleNode.InnerText.Trim()}");
-                    result.AppendLine();
-                }
-
-                // Extract meta description
-                var metaDesc = doc.DocumentNode.SelectSingleNode("//meta[@name='description']");
-                if (metaDesc != null)
-                {
-                    var description = metaDesc.GetAttributeValue("content", "");
-                    if (!string.IsNullOrEmpty(description))
-                    {
-                        result.AppendLine($"Description: {description.Trim()}");
-                        result.AppendLine();
-                    }
-                }
-
-                // Extract main content
-                result.AppendLine("Content:");
-                result.AppendLine("--------");
-
-                // Try to find main content areas first
-                var mainContentNodes = doc.DocumentNode.SelectNodes(
-                    "//main | //article | //div[@class*='content'] | //div[@id*='content'] | " +
-                    "//div[@class*='article'] | //div[@id*='article'] | //section[@class*='content']");
-
-                HtmlNode contentContainer;
-                if (mainContentNodes != null && mainContentNodes.Count > 0)
-                {
-                    // Use the first main content area found
-                    contentContainer = mainContentNodes[0];
+                    return FormatPlainTextContent(content, maxLength);
                 }
                 else
                 {
-                    // Fall back to body if no main content area is found
-                    contentContainer = doc.DocumentNode.SelectSingleNode("//body") ?? doc.DocumentNode;
+                    // Default to HTML processing
+                    return ProcessHtmlContent(content, includeLinks, maxLength);
                 }
-
-                ExtractTextContent(contentContainer, result, includeLinks);
-
-                var text = result.ToString();
-
-                Console.WriteLine(text);
-
-                // Truncate if necessary
-                if (text.Length > maxLength)
-                {
-                    text = text.Substring(0, maxLength) + "... [Content truncated]";
-                }
-
-                return text;
             }
             catch (HttpRequestException ex)
             {
@@ -192,6 +141,150 @@ namespace LocalChatAgent.Tools
             {
                 return $"Error processing webpage: {ex.Message}";
             }
+        }
+
+        private bool IsJsonContent(string content)
+        {
+            if (string.IsNullOrWhiteSpace(content)) return false;
+            
+            var trimmed = content.Trim();
+            return (trimmed.StartsWith("{") && trimmed.EndsWith("}")) ||
+                   (trimmed.StartsWith("[") && trimmed.EndsWith("]"));
+        }
+
+        private bool IsPlainTextContent(string contentType, string content)
+        {
+            return contentType.Contains("text/") && !contentType.Contains("text/html");
+        }
+
+        private string FormatJsonContent(string jsonContent, int maxLength)
+        {
+            try
+            {
+                var result = new StringBuilder();
+                result.AppendLine("Content Type: JSON");
+                result.AppendLine("===================");
+                result.AppendLine();
+
+                // Try to pretty-print the JSON
+                try
+                {
+                    var jsonDocument = JsonDocument.Parse(jsonContent);
+                    var prettyJson = JsonSerializer.Serialize(jsonDocument, new JsonSerializerOptions 
+                    { 
+                        WriteIndented = true 
+                    });
+                    result.AppendLine(prettyJson);
+                }
+                catch
+                {
+                    // If JSON parsing fails, just return the raw content
+                    result.AppendLine("Raw JSON Content:");
+                    result.AppendLine(jsonContent);
+                }
+
+                var text = result.ToString();
+                if (text.Length > maxLength)
+                {
+                    text = text.Substring(0, maxLength) + "... [Content truncated]";
+                }
+
+                return text;
+            }
+            catch (Exception ex)
+            {
+                return $"Error formatting JSON content: {ex.Message}\n\nRaw content:\n{jsonContent}";
+            }
+        }
+
+        private string FormatPlainTextContent(string textContent, int maxLength)
+        {
+            var result = new StringBuilder();
+            result.AppendLine("Content Type: Plain Text");
+            result.AppendLine("==========================");
+            result.AppendLine();
+            result.AppendLine(textContent);
+
+            var text = result.ToString();
+            if (text.Length > maxLength)
+            {
+                text = text.Substring(0, maxLength) + "... [Content truncated]";
+            }
+
+            return text;
+        }
+
+        private string ProcessHtmlContent(string htmlContent, bool includeLinks, int maxLength)
+        {
+            var doc = new HtmlDocument();
+            doc.LoadHtml(htmlContent);
+
+            // Remove script and style elements
+            var scriptsAndStyles = doc.DocumentNode.SelectNodes("//script | //style | //noscript");
+            if (scriptsAndStyles != null)
+            {
+                foreach (var node in scriptsAndStyles)
+                {
+                    node.Remove();
+                }
+            }
+
+            var result = new StringBuilder();
+
+            // Extract title
+            var titleNode = doc.DocumentNode.SelectSingleNode("//title");
+            if (titleNode != null)
+            {
+                result.AppendLine($"Title: {titleNode.InnerText.Trim()}");
+                result.AppendLine();
+            }
+
+            // Extract meta description
+            var metaDesc = doc.DocumentNode.SelectSingleNode("//meta[@name='description']");
+            if (metaDesc != null)
+            {
+                var description = metaDesc.GetAttributeValue("content", "");
+                if (!string.IsNullOrEmpty(description))
+                {
+                    result.AppendLine($"Description: {description.Trim()}");
+                    result.AppendLine();
+                }
+            }
+
+            // Extract main content
+            result.AppendLine("Content:");
+            result.AppendLine("--------");
+
+            // Try to find main content areas first
+            var mainContentNodes = doc.DocumentNode.SelectNodes(
+                "//main | //article | //div[@class*='content'] | //div[@id*='content'] | " +
+                "//div[@class*='article'] | //div[@id*='article'] | //section[@class*='content']");
+
+            HtmlNode contentContainer;
+            if (mainContentNodes != null && mainContentNodes.Count > 0)
+            {
+                // Use the first main content area found
+                contentContainer = mainContentNodes[0];
+            }
+            else
+            {
+                // Fall back to body if no main content area is found
+                contentContainer = doc.DocumentNode.SelectSingleNode("//body") ?? doc.DocumentNode;
+            }
+
+            ExtractTextContent(contentContainer, result, includeLinks);
+
+            var text = result.ToString();
+
+            Console.WriteLine(text);
+
+            // Truncate if necessary
+            if (text.Length > maxLength)
+            {
+                text = text.Substring(0, maxLength) + "... [Content truncated]";
+            }
+
+            return text;
         }
 
         private void ExtractTextContent(HtmlNode node, StringBuilder result, bool includeLinks)
