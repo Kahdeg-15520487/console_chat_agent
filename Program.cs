@@ -39,6 +39,98 @@ namespace LocalChatAgent
             }
         }
 
+        private static CharacterCard? LoadCharacterCard()
+        {
+            try
+            {
+                // Look for character card files in the application directory
+                var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                var characterDirectory = Path.Combine(appDirectory, "characters");
+                
+                // Create characters directory if it doesn't exist
+                if (!Directory.Exists(characterDirectory))
+                {
+                    Directory.CreateDirectory(characterDirectory);
+                    Console.WriteLine($"Created characters directory: {characterDirectory}");
+                    Console.WriteLine("You can place character card PNG or JSON files in this directory.");
+                    Console.WriteLine();
+                    return null;
+                }
+
+                // Look for character card files
+                var files = Directory.GetFiles(characterDirectory)
+                    .Where(f => CharacterCardLoader.IsSupportedFile(f))
+                    .ToArray();
+
+                if (files.Length == 0)
+                {
+                    Console.WriteLine("No character card files found in the characters directory.");
+                    Console.WriteLine("You can place character card PNG or JSON files there to load a character.");
+                    Console.WriteLine();
+                    return null;
+                }
+
+                if (files.Length == 1)
+                {
+                    // Auto-load single character card
+                    var file = files[0];
+                    Console.WriteLine($"Loading character card: {Path.GetFileName(file)}");
+                    
+                    var task = Path.GetExtension(file).ToLowerInvariant() == ".png" 
+                        ? CharacterCardLoader.LoadFromPngAsync(file) 
+                        : CharacterCardLoader.LoadFromJsonAsync(file);
+                    
+                    var result = task.GetAwaiter().GetResult();
+                    Console.WriteLine();
+                    return result;
+                }
+
+                // Multiple files - let user choose
+                Console.WriteLine("Multiple character cards found:");
+                for (int i = 0; i < files.Length; i++)
+                {
+                    Console.WriteLine($"  {i + 1}. {Path.GetFileName(files[i])}");
+                }
+                Console.WriteLine($"  {files.Length + 1}. Continue without character card");
+                Console.WriteLine();
+
+                int choice = -1;
+                while (choice < 1 || choice > files.Length + 1)
+                {
+                    Console.Write("Select a character card (enter number): ");
+                    var input = Console.ReadLine();
+                    if (!int.TryParse(input, out choice) || choice < 1 || choice > files.Length + 1)
+                    {
+                        Console.WriteLine("Invalid selection. Please enter a valid number.");
+                    }
+                }
+
+                if (choice == files.Length + 1)
+                {
+                    Console.WriteLine("Continuing without character card.");
+                    Console.WriteLine();
+                    return null;
+                }
+
+                var selectedFile = files[choice - 1];
+                Console.WriteLine($"Loading character card: {Path.GetFileName(selectedFile)}");
+                
+                var loadTask = Path.GetExtension(selectedFile).ToLowerInvariant() == ".png" 
+                    ? CharacterCardLoader.LoadFromPngAsync(selectedFile) 
+                    : CharacterCardLoader.LoadFromJsonAsync(selectedFile);
+                
+                var characterCard = loadTask.GetAwaiter().GetResult();
+                Console.WriteLine();
+                return characterCard;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during character card loading: {ex.Message}");
+                Console.WriteLine();
+                return null;
+            }
+        }
+
         static async Task Main(string[] args)
         {
             Console.WriteLine("Local Chat Agent - OpenAI Compatible");
@@ -158,8 +250,11 @@ namespace LocalChatAgent
             toolManager.RegisterTool(new WebFetchTool());
             toolManager.RegisterTool(new CalculatorTool());
 
-            // Initialize chat agent
-            _chatAgent = new ChatAgent(openAIClient, toolManager, _apiConfig);
+            // Load character card if available
+            var characterCard = LoadCharacterCard();
+
+            // Initialize chat agent with character card
+            _chatAgent = new ChatAgent(openAIClient, toolManager, _apiConfig, characterCard);
 
             Console.WriteLine("Available tools:");
             foreach (var toolName in toolManager.GetToolNames())
@@ -175,10 +270,17 @@ namespace LocalChatAgent
             Console.WriteLine("  /help      - Show this help message");
             Console.WriteLine("  /clear     - Clear conversation history");
             Console.WriteLine("  /clearall  - Clear both conversation and command history");
-            Console.WriteLine("  /history   - Show conversation history");
+            Console.WriteLine("  /history   - Show conversation history with token counts");
             Console.WriteLine("  /commands  - Show recent command history");
             Console.WriteLine("  /stream    - Toggle streaming mode (current: " + (_useStreaming ? "ON" : "OFF") + ")");
+            Console.WriteLine("  /character - Show current character card info");
+            Console.WriteLine("  /prompt    - Show current system prompt with token count");
             Console.WriteLine("  /exit      - Exit the application");
+            Console.WriteLine();
+            Console.WriteLine("Character Cards:");
+            Console.WriteLine("  Place character card PNG or JSON files in the 'characters' directory");
+            Console.WriteLine("  Character cards define AI personality and behavior");
+            Console.WriteLine("  Supported formats: PNG with embedded metadata, JSON files");
             Console.WriteLine();
             Console.WriteLine("Hotkeys:");
             Console.WriteLine("  Ctrl+C     - Cancel current chat request");
@@ -496,20 +598,28 @@ namespace LocalChatAgent
 
                 case "/history":
                     var history = _chatAgent.GetConversationHistory();
+                    var totalTokens = _chatAgent?.GetConversationTokenCount() ?? 0;
                     Console.WriteLine("Conversation History:");
                     Console.WriteLine("====================");
+                    Console.WriteLine($"Total estimated tokens: {totalTokens}");
+                    Console.WriteLine($"Max tokens configured: {_apiConfig?.MaxTokens ?? 0}");
+                    Console.WriteLine();
+                    
                     foreach (var message in history)
                     {
                         if (message.Role == "system")
                             continue;
-                            
+                        
+                        var messageTokens = _chatAgent?.EstimateTokenCount(message.Content ?? "") ?? 0;
                         Console.WriteLine($"{message.Role.ToUpper()}: {message.Content}");
+                        Console.WriteLine($"  [Tokens: {messageTokens}]");
                         
                         if (message.ToolCalls?.Count > 0)
                         {
                             foreach (var toolCall in message.ToolCalls)
                             {
-                                Console.WriteLine($"  [Tool Call: {toolCall.Function.Name}]");
+                                var toolTokens = _chatAgent?.EstimateTokenCount(toolCall.Function.Name + toolCall.Function.Arguments) ?? 0;
+                                Console.WriteLine($"  [Tool Call: {toolCall.Function.Name}, Tokens: {toolTokens}]");
                             }
                         }
                     }
@@ -545,6 +655,52 @@ namespace LocalChatAgent
                     if (_useStreaming)
                     {
                         Console.WriteLine("Note: Tool calls are not supported in streaming mode.");
+                    }
+                    Console.WriteLine();
+                    return Task.FromResult(false);
+
+                case "/character":
+                    var characterCard = _chatAgent?.GetCharacterCard();
+                    if (characterCard != null)
+                    {
+                        Console.WriteLine("Current Character Card:");
+                        Console.WriteLine("======================");
+                        Console.WriteLine($"Name: {characterCard.Name}");
+                        if (!string.IsNullOrEmpty(characterCard.Creator))
+                            Console.WriteLine($"Creator: {characterCard.Creator}");
+                        if (!string.IsNullOrEmpty(characterCard.Description))
+                            Console.WriteLine($"Description: {characterCard.Description}");
+                        if (!string.IsNullOrEmpty(characterCard.Personality))
+                            Console.WriteLine($"Personality: {characterCard.Personality}");
+                        if (!string.IsNullOrEmpty(characterCard.Scenario))
+                            Console.WriteLine($"Scenario: {characterCard.Scenario}");
+                        if (characterCard.Tags.Any())
+                            Console.WriteLine($"Tags: {string.Join(", ", characterCard.Tags)}");
+                        if (!string.IsNullOrEmpty(characterCard.CharacterVersion))
+                            Console.WriteLine($"Version: {characterCard.CharacterVersion}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("No character card is currently loaded.");
+                        Console.WriteLine("Place character card PNG or JSON files in the 'characters' directory and restart the application.");
+                    }
+                    Console.WriteLine();
+                    return Task.FromResult(false);
+
+                case "/prompt":
+                    var systemPrompt = _chatAgent?.GetCurrentSystemPrompt();
+                    var systemPromptTokens = _chatAgent?.GetSystemPromptTokenCount() ?? 0;
+                    Console.WriteLine("Current System Prompt:");
+                    Console.WriteLine("=====================");
+                    if (!string.IsNullOrEmpty(systemPrompt))
+                    {
+                        Console.WriteLine(systemPrompt);
+                        Console.WriteLine();
+                        Console.WriteLine($"Estimated tokens: {systemPromptTokens}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("No system prompt available.");
                     }
                     Console.WriteLine();
                     return Task.FromResult(false);

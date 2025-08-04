@@ -5,6 +5,7 @@ A local console-based chat agent that connects to OpenAI-compatible APIs with to
 ## Features
 
 - **OpenAI-Compatible API Support**: Works with OpenAI API or any compatible endpoint (like Ollama, LM Studio, etc.)
+- **Character Card Support**: Load AI personalities from PNG character cards or JSON files to customize behavior and responses
 - **Real-time Streaming**: Support for streaming responses with real-time text generation
 - **Tool Use Capabilities**: Built-in support for function calling with tools
 - **Multi-Engine Web Search**: Search the web using DuckDuckGo, Bing, or Google search engines with HTML parsing
@@ -101,7 +102,76 @@ You can specify which search engine to use in your queries:
 - `"Search Google for latest news"`
 - `"Use Bing to find information about..."`
 
-### 3. Build and Run
+### 3. Character Cards
+
+Character cards allow you to customize the AI's personality, behavior, and initial context. The application supports both PNG character cards (with embedded metadata) and JSON character card files.
+
+#### **Setting Up Character Cards**
+
+1. **Create a characters directory**: The application will automatically create a `characters` directory in the application folder on first run.
+
+2. **Add character card files**: Place your character card files in the `characters` directory.
+
+#### **Supported Formats**
+
+**PNG Character Cards** (Recommended for compatibility):
+- PNG images with embedded JSON metadata in tEXt chunks
+- Common metadata keys: `chara`, `ccv2`, `Comment`, `Description`, `UserComment`
+- Data can be base64 encoded or plain JSON
+- Compatible with tools like CharacterAI, Tavern AI, and SillyTavern
+
+**JSON Character Cards**:
+- Direct JSON files with character data
+- Easier to create and edit manually
+
+#### **Character Card Format**
+
+Both PNG and JSON character cards support the following fields:
+
+```json
+{
+  "name": "Character Name",
+  "description": "Brief description of the character",
+  "personality": "Character's personality traits",
+  "scenario": "The setting or context",
+  "first_mes": "Character's initial greeting message",
+  "mes_example": "Example conversation showing character's style",
+  "system_prompt": "Custom system prompt (overrides other fields)",
+  "post_history_instructions": "Instructions to append after conversation",
+  "alternate_greetings": ["Alternative greeting 1", "Alternative greeting 2"],
+  "tags": ["tag1", "tag2"],
+  "creator": "Creator name",
+  "character_version": "1.0"
+}
+```
+
+#### **Character Card Selection**
+
+- **Single card**: If only one character card is found, it will be loaded automatically
+- **Multiple cards**: The application will present a selection menu at startup
+- **No cards**: The application runs with the default assistant personality
+
+#### **Character Card Commands**
+
+- `/character` - Display information about the currently loaded character card
+- `/clear` - Reset conversation history (character's first message will be shown again)
+
+#### **Example Character Card**
+
+```json
+{
+  "name": "Elena",
+  "description": "A knowledgeable research assistant",
+  "personality": "Curious, patient, thorough, and encouraging",
+  "scenario": "Elena is working as a personal research assistant",
+  "first_mes": "Hello! I'm Elena, your research assistant. What would you like to explore today?",
+  "system_prompt": "You are Elena, a helpful research assistant who loves to learn and share knowledge.",
+  "tags": ["assistant", "research", "educational"],
+  "creator": "Example"
+}
+```
+
+### 4. Build and Run
 
 ```bash
 dotnet build
@@ -144,6 +214,7 @@ Commands:
   /help      - Show this help message
   /clear     - Clear conversation history
   /history   - Show conversation history
+  /character - Show current character card info
   /stream    - Toggle streaming mode (current: OFF)
   /exit      - Exit the application
 

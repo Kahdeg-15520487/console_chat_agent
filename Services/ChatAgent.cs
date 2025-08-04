@@ -17,26 +17,56 @@ namespace LocalChatAgent.Services
         private readonly ToolManager _toolManager;
         private readonly ApiConfig _config;
         private readonly List<ChatMessage> _conversationHistory;
+        private CharacterCard? _characterCard;
 
-        public ChatAgent(OpenAIClient openAIClient, ToolManager toolManager, ApiConfig config)
+        public ChatAgent(OpenAIClient openAIClient, ToolManager toolManager, ApiConfig config, CharacterCard? characterCard = null)
         {
             _openAIClient = openAIClient;
             _toolManager = toolManager;
             _config = config;
+            _characterCard = characterCard;
             _conversationHistory = new List<ChatMessage>();
             
-            // Add system message with dynamic tool descriptions
+            // Add system message with dynamic tool descriptions and character card
             var systemPrompt = BuildSystemPrompt();
             _conversationHistory.Add(new ChatMessage
             {
                 Role = "system",
                 Content = systemPrompt
             });
+
+            // Add character's first message if available
+            if (_characterCard != null && !string.IsNullOrEmpty(_characterCard.GetFirstMessage()))
+            {
+                _conversationHistory.Add(new ChatMessage
+                {
+                    Role = "assistant",
+                    Content = _characterCard.GetFirstMessage()
+                });
+            }
         }
 
         private string BuildSystemPrompt()
         {
-            var basePrompt = "You are a helpful AI assistant with access to tools. Be concise and direct in your responses. Do not use markdown formatting, bullet points, or special formatting. Respond in plain text only.";
+            var basePrompt = "";
+
+            // Use character card system prompt if available
+            if (_characterCard != null)
+            {
+                var characterPrompt = _characterCard.GetSystemPrompt();
+                if (!string.IsNullOrEmpty(characterPrompt))
+                {
+                    basePrompt = characterPrompt;
+                }
+                else
+                {
+                    basePrompt = "You are a helpful AI assistant with access to tools. Be concise and direct in your responses. Do not use markdown formatting, bullet points, or special formatting. Respond in plain text only.";
+                }
+            }
+            else
+            {
+                basePrompt = "You are a helpful AI assistant with access to tools. Be concise and direct in your responses. Do not use markdown formatting, bullet points, or special formatting. Respond in plain text only.";
+            }
             
             var availableTools = _toolManager.GetAvailableTools();
             if (availableTools.Any())
@@ -231,6 +261,69 @@ namespace LocalChatAgent.Services
                 Role = "system",
                 Content = systemPrompt
             });
+
+            // Add character's first message if available
+            if (_characterCard != null && !string.IsNullOrEmpty(_characterCard.GetFirstMessage()))
+            {
+                _conversationHistory.Add(new ChatMessage
+                {
+                    Role = "assistant",
+                    Content = _characterCard.GetFirstMessage()
+                });
+            }
+        }
+
+        public CharacterCard? GetCharacterCard()
+        {
+            return _characterCard;
+        }
+
+        public void SetCharacterCard(CharacterCard? characterCard)
+        {
+            _characterCard = characterCard;
+            ClearHistory(); // Rebuild conversation with new character
+        }
+
+        public string GetCurrentSystemPrompt()
+        {
+            var systemMessage = _conversationHistory.FirstOrDefault(m => m.Role == "system");
+            return systemMessage?.Content ?? "No system prompt found";
+        }
+
+        public int EstimateTokenCount(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return 0;
+
+            // Simple token estimation: ~4 characters per token for English text
+            // This is a rough approximation - actual tokenization depends on the specific model
+            return (int)Math.Ceiling(text.Length / 4.0);
+        }
+
+        public int GetSystemPromptTokenCount()
+        {
+            var systemPrompt = GetCurrentSystemPrompt();
+            return EstimateTokenCount(systemPrompt);
+        }
+
+        public int GetConversationTokenCount()
+        {
+            int totalTokens = 0;
+            foreach (var message in _conversationHistory)
+            {
+                totalTokens += EstimateTokenCount(message.Content ?? "");
+                
+                // Add tokens for tool calls if present
+                if (message.ToolCalls != null)
+                {
+                    foreach (var toolCall in message.ToolCalls)
+                    {
+                        totalTokens += EstimateTokenCount(toolCall.Function.Name);
+                        totalTokens += EstimateTokenCount(toolCall.Function.Arguments);
+                    }
+                }
+            }
+            return totalTokens;
         }
 
         public List<ChatMessage> GetConversationHistory()
