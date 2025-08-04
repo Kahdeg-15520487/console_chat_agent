@@ -16,6 +16,7 @@ namespace LocalChatAgent
     {
         private static ApiConfig? _apiConfig;
         private static ChatAgent? _chatAgent;
+        private static SessionManager? _sessionManager;
         private static bool _useStreaming = false;
         private static bool _conversationOnlyMode = false;
         private static CancellationTokenSource? _currentRequestCancellation;
@@ -154,7 +155,7 @@ namespace LocalChatAgent
                 }
 
                 // Initialize the chat agent
-                InitializeChatAgent();
+                await InitializeChatAgentAsync();
 
                 // Display help
                 DisplayHelp();
@@ -215,7 +216,7 @@ namespace LocalChatAgent
             }
         }
 
-        private static void InitializeChatAgent()
+        private static async Task InitializeChatAgentAsync()
         {
             if (_apiConfig == null)
                 throw new InvalidOperationException("Configuration not loaded");
@@ -254,11 +255,17 @@ namespace LocalChatAgent
             // Load character card if available
             var characterCard = LoadCharacterCard();
 
-            // Initialize chat agent with character card
-            _chatAgent = new ChatAgent(openAIClient, toolManager, _apiConfig, characterCard);
+            // Initialize session manager
+            _sessionManager = new SessionManager();
+
+            // Initialize chat agent with character card and session manager
+            _chatAgent = new ChatAgent(openAIClient, toolManager, _apiConfig, characterCard, _sessionManager);
             
             // Set initial conversation-only mode state
             _chatAgent.SetConversationOnlyMode(_conversationOnlyMode);
+
+            // Auto-load or create session for the character
+            await AutoLoadOrCreateSessionAsync(characterCard);
 
             Console.WriteLine("Available tools:");
             foreach (var toolName in toolManager.GetToolNames())
@@ -266,6 +273,135 @@ namespace LocalChatAgent
                 Console.WriteLine($"  - {toolName}");
             }
             Console.WriteLine();
+        }
+
+        private static async Task AutoLoadOrCreateSessionAsync(CharacterCard? characterCard)
+        {
+            if (_sessionManager == null || _chatAgent == null)
+                return;
+
+            string characterName = characterCard?.Name ?? "Assistant";
+            
+            // Try to load the latest session for this character
+            var latestSession = await _sessionManager.GetLatestSessionForCharacterAsync(characterName);
+            
+            if (latestSession != null)
+            {
+                // Load existing session
+                await _sessionManager.LoadSessionAsync(latestSession.Id);
+                _chatAgent.LoadSessionHistory(latestSession.Messages);
+                Console.WriteLine($"Loaded latest session: {latestSession.Name} (last modified: {latestSession.LastModified:yyyy-MM-dd HH:mm})");
+                Console.WriteLine($"Session contains {latestSession.Messages.Count} messages.");
+            }
+            else
+            {
+                // Create new session
+                string sessionName = $"{characterName}_Session_{DateTime.Now:yyyyMMdd_HHmmss}";
+                await _sessionManager.CreateNewSessionAsync(sessionName, characterCard);
+                Console.WriteLine($"Created new session: {sessionName}");
+            }
+            
+            Console.WriteLine();
+        }
+
+        private static async Task ChangeCharacterAsync()
+        {
+            try
+            {
+                // Show available character cards
+                var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                var characterDirectory = Path.Combine(appDirectory, "characters");
+                
+                if (!Directory.Exists(characterDirectory))
+                {
+                    Console.WriteLine("Characters directory not found. Create a 'characters' directory and add character card files.");
+                    return;
+                }
+
+                var files = Directory.GetFiles(characterDirectory)
+                    .Where(f => CharacterCardLoader.IsSupportedFile(f))
+                    .ToArray();
+
+                if (files.Length == 0)
+                {
+                    Console.WriteLine("No character card files found in the characters directory.");
+                    return;
+                }
+
+                Console.WriteLine("Available character cards:");
+                for (int i = 0; i < files.Length; i++)
+                {
+                    Console.WriteLine($"  {i + 1}. {Path.GetFileName(files[i])}");
+                }
+                Console.WriteLine($"  {files.Length + 1}. Continue without character card");
+                Console.WriteLine();
+
+                int choice = -1;
+                while (choice < 1 || choice > files.Length + 1)
+                {
+                    Console.Write("Select a character card (enter number): ");
+                    var input = Console.ReadLine();
+                    if (!int.TryParse(input, out choice) || choice < 1 || choice > files.Length + 1)
+                    {
+                        Console.WriteLine("Invalid selection. Please enter a valid number.");
+                    }
+                }
+
+                CharacterCard? newCharacterCard = null;
+                
+                if (choice <= files.Length)
+                {
+                    var selectedFile = files[choice - 1];
+                    Console.WriteLine($"Loading character card: {Path.GetFileName(selectedFile)}");
+                    
+                    var loadTask = Path.GetExtension(selectedFile).ToLowerInvariant() == ".png" 
+                        ? CharacterCardLoader.LoadFromPngAsync(selectedFile) 
+                        : CharacterCardLoader.LoadFromJsonAsync(selectedFile);
+                    
+                    newCharacterCard = await loadTask;
+                }
+                else
+                {
+                    Console.WriteLine("Continuing without character card.");
+                }
+
+                // Reinitialize the chat agent with the new character
+                await ReinitializeChatAgentWithCharacterAsync(newCharacterCard);
+                
+                Console.WriteLine("Character changed successfully!");
+                Console.WriteLine();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error changing character: {ex.Message}");
+                Console.WriteLine();
+            }
+        }
+
+        private static async Task ReinitializeChatAgentWithCharacterAsync(CharacterCard? characterCard)
+        {
+            if (_apiConfig == null || _sessionManager == null)
+                return;
+
+            // Initialize OpenAI client
+            var openAIClient = new OpenAIClient(_apiConfig);
+
+            // Initialize tool manager (reuse existing setup)
+            var toolManager = new ToolManager();
+            
+            // Register tools
+            toolManager.RegisterTool(new WebSearchTool());
+            toolManager.RegisterTool(new WebFetchTool());
+            toolManager.RegisterTool(new CalculatorTool());
+
+            // Reinitialize chat agent with new character card
+            _chatAgent = new ChatAgent(openAIClient, toolManager, _apiConfig, characterCard, _sessionManager);
+            
+            // Set conversation-only mode state
+            _chatAgent.SetConversationOnlyMode(_conversationOnlyMode);
+
+            // Auto-load or create session for the new character
+            await AutoLoadOrCreateSessionAsync(characterCard);
         }
 
         private static void DisplayHelp()
@@ -279,7 +415,13 @@ namespace LocalChatAgent
             Console.WriteLine("  /stream    - Toggle streaming mode (current: " + (_useStreaming ? "ON" : "OFF") + ")");
             Console.WriteLine("  /conversation - Toggle conversation-only mode (current: " + (_conversationOnlyMode ? "ON" : "OFF") + ")");
             Console.WriteLine("  /character - Show current character card info");
+            Console.WriteLine("  /changecharacter - Switch to a different character card");
             Console.WriteLine("  /prompt    - Show current system prompt with token count");
+            Console.WriteLine("  /session   - Show session management commands");
+            Console.WriteLine("  /newsession - Create new or load existing session");
+            Console.WriteLine("  /sessions  - List all saved sessions");
+            Console.WriteLine("  /load <session_id> - Load a specific session");
+            Console.WriteLine("  /save      - Save current session");
             Console.WriteLine("  /exit      - Exit the application");
             Console.WriteLine();
             Console.WriteLine("Character Cards:");
@@ -291,6 +433,12 @@ namespace LocalChatAgent
             Console.WriteLine("  Normal mode: LLM sees system prompts, tool calls, and full context");
             Console.WriteLine("  Conversation-only mode: LLM sees only user/assistant messages (no tools, no system prompts)");
             Console.WriteLine("  Use /conversation to toggle between modes");
+            Console.WriteLine();
+            Console.WriteLine("Chat Sessions:");
+            Console.WriteLine("  Sessions save user and assistant messages for each character");
+            Console.WriteLine("  Use /newsession to start fresh conversations");
+            Console.WriteLine("  Use /sessions to see all saved sessions");
+            Console.WriteLine("  Use /load to resume previous conversations");
             Console.WriteLine();
             Console.WriteLine("Hotkeys:");
             Console.WriteLine("  Ctrl+C     - Cancel current chat request");
@@ -581,22 +729,22 @@ namespace LocalChatAgent
             }
         }
 
-        private static Task<bool> HandleCommandAsync(string command)
+        private static async Task<bool> HandleCommandAsync(string command)
         {
             if (_chatAgent == null)
-                return Task.FromResult(false);
+                return false;
 
             switch (command)
             {
                 case "/help":
                     DisplayHelp();
-                    return Task.FromResult(false);
+                    return false;
 
                 case "/clear":
                     _chatAgent.ClearHistory();
                     Console.WriteLine("Conversation history cleared.");
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
 
                 case "/clearall":
                     _chatAgent.ClearHistory();
@@ -604,7 +752,7 @@ namespace LocalChatAgent
                     SaveCommandHistory(); // Save the cleared history to file
                     Console.WriteLine("Both conversation and command history cleared.");
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
 
                 case "/history":
                     var history = _chatAgent.GetConversationHistory();
@@ -634,7 +782,7 @@ namespace LocalChatAgent
                         }
                     }
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
 
                 case "/commands":
                     Console.WriteLine("Command History:");
@@ -657,7 +805,7 @@ namespace LocalChatAgent
                         Console.WriteLine("No commands in history.");
                     }
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
 
                 case "/stream":
                     _useStreaming = !_useStreaming;
@@ -667,7 +815,7 @@ namespace LocalChatAgent
                         Console.WriteLine("Note: Tool calls are not supported in streaming mode.");
                     }
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
 
                 case "/conversation":
                     _conversationOnlyMode = !_conversationOnlyMode;
@@ -683,7 +831,7 @@ namespace LocalChatAgent
                         Console.WriteLine("LLM will see full conversation context including system prompts and tool calls.");
                     }
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
 
                 case "/character":
                     var characterCard = _chatAgent?.GetCharacterCard();
@@ -711,7 +859,11 @@ namespace LocalChatAgent
                         Console.WriteLine("Place character card PNG or JSON files in the 'characters' directory and restart the application.");
                     }
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
+
+                case "/changecharacter":
+                    await ChangeCharacterAsync();
+                    return false;
 
                 case "/prompt":
                     var systemPrompt = _chatAgent?.GetCurrentSystemPrompt();
@@ -729,18 +881,272 @@ namespace LocalChatAgent
                         Console.WriteLine("No system prompt available.");
                     }
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
+
+                case "/session":
+                    HandleSessionCommand();
+                    return false;
+
+                case "/sessions":
+                    await HandleSessionsListCommandAsync();
+                    return false;
+
+                case "/save":
+                    await HandleSaveSessionCommandAsync();
+                    return false;
 
                 case "/exit":
                 case "/quit":
                     Console.WriteLine("Goodbye!");
-                    return Task.FromResult(true);
+                    return true;
 
                 default:
+                    // Handle commands with parameters
+                    if (command.StartsWith("/newsession"))
+                    {
+                        await HandleNewSessionCommandAsync();
+                        return false;
+                    }
+                    else if (command.StartsWith("/load"))
+                    {
+                        var sessionId = command.Substring("/load".Length).Trim();
+                        if (string.IsNullOrEmpty(sessionId))
+                        {
+                            Console.WriteLine("Please provide a session ID: /load <session_id>");
+                        }
+                        else
+                        {
+                            await HandleLoadSessionCommandAsync(sessionId);
+                        }
+                        return false;
+                    }
+
                     Console.WriteLine($"Unknown command: {command}");
                     Console.WriteLine();
-                    return Task.FromResult(false);
+                    return false;
             }
+        }
+
+        private static void HandleSessionCommand()
+        {
+            if (_sessionManager == null)
+            {
+                Console.WriteLine("Session manager not initialized.");
+                return;
+            }
+
+            var currentSession = _sessionManager.CurrentSession;
+            Console.WriteLine("Session Management:");
+            Console.WriteLine("==================");
+            
+            if (currentSession != null)
+            {
+                Console.WriteLine($"Current Session: {currentSession.Name} (ID: {currentSession.Id})");
+                Console.WriteLine($"Character: {currentSession.CharacterName}");
+                Console.WriteLine($"Created: {currentSession.CreatedAt:yyyy-MM-dd HH:mm:ss}");
+                Console.WriteLine($"Last Modified: {currentSession.LastModified:yyyy-MM-dd HH:mm:ss}");
+                Console.WriteLine($"Messages: {currentSession.Messages.Count}");
+            }
+            else
+            {
+                Console.WriteLine("No active session");
+            }
+            
+            Console.WriteLine();
+            Console.WriteLine("Available Commands:");
+            Console.WriteLine("  /newsession        - Create new or load existing session");
+            Console.WriteLine("  /sessions          - List all sessions");
+            Console.WriteLine("  /load <id>         - Load a session");
+            Console.WriteLine("  /save              - Save current session");
+            Console.WriteLine();
+        }
+
+        private static async Task HandleSessionsListCommandAsync()
+        {
+            if (_sessionManager == null)
+            {
+                Console.WriteLine("Session manager not initialized.");
+                return;
+            }
+
+            var sessions = await _sessionManager.GetAllSessionsAsync();
+            
+            Console.WriteLine("Saved Sessions:");
+            Console.WriteLine("===============");
+            
+            if (sessions.Count == 0)
+            {
+                Console.WriteLine("No saved sessions found.");
+            }
+            else
+            {
+                Console.WriteLine($"Sessions directory: {_sessionManager.GetSessionsDirectory()}");
+                Console.WriteLine();
+                
+                foreach (var session in sessions)
+                {
+                    var isActive = _sessionManager.CurrentSession?.Id == session.Id ? " (ACTIVE)" : "";
+                    Console.WriteLine($"ID: {session.Id}{isActive}");
+                    Console.WriteLine($"  Name: {session.Name}");
+                    Console.WriteLine($"  Character: {session.CharacterName}");
+                    Console.WriteLine($"  Messages: {session.Messages.Count}");
+                    Console.WriteLine($"  Last Modified: {session.LastModified:yyyy-MM-dd HH:mm:ss}");
+                    Console.WriteLine();
+                }
+            }
+        }
+
+        private static async Task HandleNewSessionCommandAsync()
+        {
+            if (_sessionManager == null || _chatAgent == null)
+            {
+                Console.WriteLine("Session manager or chat agent not initialized.");
+                return;
+            }
+
+            // Get all existing sessions
+            var sessions = await _sessionManager.GetAllSessionsAsync();
+            
+            Console.WriteLine("Session Selection:");
+            Console.WriteLine("==================");
+            Console.WriteLine("1. Create new session");
+            
+            if (sessions.Count > 0)
+            {
+                Console.WriteLine("2. Load existing session");
+                Console.WriteLine();
+                Console.WriteLine("Existing sessions:");
+                for (int i = 0; i < sessions.Count; i++)
+                {
+                    var session = sessions[i];
+                    var isActive = _sessionManager.CurrentSession?.Id == session.Id ? " (CURRENT)" : "";
+                    Console.WriteLine($"  {i + 3}. {session.Name}{isActive}");
+                    Console.WriteLine($"     Character: {session.CharacterName} | Messages: {session.Messages.Count} | Modified: {session.LastModified:MM/dd HH:mm}");
+                }
+            }
+            
+            Console.WriteLine();
+
+            int choice = -1;
+            int maxChoice = sessions.Count > 0 ? sessions.Count + 2 : 1;
+            
+            while (choice < 1 || choice > maxChoice)
+            {
+                Console.Write("Select an option (enter number): ");
+                var input = Console.ReadLine();
+                if (!int.TryParse(input, out choice) || choice < 1 || choice > maxChoice)
+                {
+                    Console.WriteLine("Invalid selection. Please enter a valid number.");
+                }
+            }
+
+            if (choice == 1)
+            {
+                // Create new session
+                Console.Write("Enter session name: ");
+                var sessionName = Console.ReadLine();
+                
+                if (string.IsNullOrWhiteSpace(sessionName))
+                {
+                    var characterCard = _chatAgent.GetCharacterCard();
+                    var characterName = characterCard?.Name ?? "Assistant";
+                    sessionName = $"{characterName}_Session_{DateTime.Now:yyyyMMdd_HHmmss}";
+                    Console.WriteLine($"Using default name: {sessionName}");
+                }
+
+                var session = await _sessionManager.CreateNewSessionAsync(sessionName, _chatAgent.GetCharacterCard());
+                
+                Console.WriteLine($"Created new session: {session.Name}");
+                Console.WriteLine($"Session ID: {session.Id}");
+                Console.WriteLine($"Character: {session.CharacterName}");
+                
+                // Clear current conversation history and start fresh
+                _chatAgent.ClearHistory();
+                
+                Console.WriteLine("Started new conversation session.");
+            }
+            else if (choice == 2 && sessions.Count > 0)
+            {
+                Console.WriteLine("Please select a specific session from the list above.");
+            }
+            else if (choice >= 3 && choice <= sessions.Count + 2)
+            {
+                // Load existing session
+                var selectedSession = sessions[choice - 3];
+                await LoadSelectedSessionAsync(selectedSession);
+            }
+            
+            Console.WriteLine();
+        }
+
+        private static async Task LoadSelectedSessionAsync(ChatSession session)
+        {
+            if (_sessionManager == null || _chatAgent == null)
+                return;
+
+            // Load the session
+            await _sessionManager.LoadSessionAsync(session.Id);
+            
+            Console.WriteLine($"Loading session: {session.Name}");
+            Console.WriteLine($"Character: {session.CharacterName}");
+            Console.WriteLine($"Created: {session.CreatedAt:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine($"Messages: {session.Messages.Count}");
+            
+            // Load session messages into chat agent
+            _chatAgent.LoadSessionHistory(session.Messages);
+            
+            Console.WriteLine("Session loaded successfully.");
+        }
+
+        private static async Task HandleLoadSessionCommandAsync(string sessionId)
+        {
+            if (_sessionManager == null || _chatAgent == null)
+            {
+                Console.WriteLine("Session manager or chat agent not initialized.");
+                return;
+            }
+
+            var session = await _sessionManager.LoadSessionAsync(sessionId);
+            
+            if (session == null)
+            {
+                Console.WriteLine($"Session with ID '{sessionId}' not found.");
+                return;
+            }
+
+            Console.WriteLine($"Loading session: {session.Name}");
+            Console.WriteLine($"Character: {session.CharacterName}");
+            Console.WriteLine($"Created: {session.CreatedAt:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine($"Messages: {session.Messages.Count}");
+            
+            // Load session messages into chat agent
+            await _chatAgent.LoadSessionMessagesAsync();
+            
+            Console.WriteLine("Session loaded successfully.");
+            Console.WriteLine();
+        }
+
+        private static async Task HandleSaveSessionCommandAsync()
+        {
+            if (_sessionManager == null)
+            {
+                Console.WriteLine("Session manager not initialized.");
+                return;
+            }
+
+            if (_sessionManager.CurrentSession == null)
+            {
+                Console.WriteLine("No active session to save. Use /newsession to create a new session.");
+                return;
+            }
+
+            await _sessionManager.SaveCurrentSessionAsync();
+            
+            var session = _sessionManager.CurrentSession;
+            Console.WriteLine($"Session saved: {session.Name}");
+            Console.WriteLine($"Messages: {session.Messages.Count}");
+            Console.WriteLine($"Last modified: {session.LastModified:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine();
         }
     }
 }

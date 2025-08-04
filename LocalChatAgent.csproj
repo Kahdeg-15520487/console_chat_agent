@@ -17,6 +17,7 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.11.54" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2651.64" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.5" />
+    <PackageReference Include="Textify" Version="0.2.0-beta" />
   </ItemGroup>
 
   <ItemGroup>

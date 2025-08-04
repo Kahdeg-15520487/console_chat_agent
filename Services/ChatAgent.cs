@@ -19,13 +19,15 @@ namespace LocalChatAgent.Services
         private readonly List<ChatMessage> _conversationHistory;
         private CharacterCard? _characterCard;
         private bool _conversationOnlyMode = false;
+        private SessionManager? _sessionManager;
 
-        public ChatAgent(OpenAIClient openAIClient, ToolManager toolManager, ApiConfig config, CharacterCard? characterCard = null)
+        public ChatAgent(OpenAIClient openAIClient, ToolManager toolManager, ApiConfig config, CharacterCard? characterCard = null, SessionManager? sessionManager = null)
         {
             _openAIClient = openAIClient;
             _toolManager = toolManager;
             _config = config;
             _characterCard = characterCard;
+            _sessionManager = sessionManager;
             _conversationHistory = new List<ChatMessage>();
             
             // Add system message with dynamic tool descriptions and character card
@@ -90,6 +92,9 @@ namespace LocalChatAgent.Services
                     Content = userMessage
                 });
 
+                // Save user message to session
+                _sessionManager?.AddMessageToCurrentSession("user", userMessage);
+
                 // Create the request
                 var request = new ChatRequest
                 {
@@ -114,6 +119,12 @@ namespace LocalChatAgent.Services
 
                 // Add assistant message to conversation history
                 _conversationHistory.Add(assistantMessage);
+
+                // Save assistant message to session (only the content, not tool calls)
+                if (!string.IsNullOrEmpty(assistantMessage.Content))
+                {
+                    _sessionManager?.AddMessageToCurrentSession("assistant", assistantMessage.Content);
+                }
 
                 // Check if the assistant wants to use tools
                 if (assistantMessage.ToolCalls?.Any() == true)
@@ -147,6 +158,9 @@ namespace LocalChatAgent.Services
                 Role = "user",
                 Content = userMessage
             });
+
+            // Save user message to session
+            _sessionManager?.AddMessageToCurrentSession("user", userMessage);
 
             // Create the request (streaming doesn't support tool calls in most implementations)
             var request = new ChatRequest
@@ -188,11 +202,18 @@ namespace LocalChatAgent.Services
                 }
 
                 // Add the complete assistant message to conversation history
+                var assistantContent = responseContent.ToString();
                 _conversationHistory.Add(new ChatMessage
                 {
                     Role = "assistant",
-                    Content = responseContent.ToString()
+                    Content = assistantContent
                 });
+
+                // Save assistant message to session
+                if (!string.IsNullOrEmpty(assistantContent))
+                {
+                    _sessionManager?.AddMessageToCurrentSession("assistant", assistantContent);
+                }
             }
         }
 
@@ -285,6 +306,47 @@ namespace LocalChatAgent.Services
             ClearHistory(); // Rebuild conversation with new character
         }
 
+        public SessionManager? GetSessionManager()
+        {
+            return _sessionManager;
+        }
+
+        public void SetSessionManager(SessionManager? sessionManager)
+        {
+            _sessionManager = sessionManager;
+        }
+
+        public async Task LoadSessionMessagesAsync()
+        {
+            if (_sessionManager?.CurrentSession == null)
+                return;
+
+            // Clear current conversation but keep system prompt and character greeting
+            var systemMessage = _conversationHistory.FirstOrDefault(m => m.Role == "system");
+            var characterGreeting = _conversationHistory.FirstOrDefault(m => m.Role == "assistant");
+            
+            _conversationHistory.Clear();
+            
+            if (systemMessage != null)
+                _conversationHistory.Add(systemMessage);
+            
+            if (characterGreeting != null && _characterCard != null && !string.IsNullOrEmpty(_characterCard.GetFirstMessage()))
+                _conversationHistory.Add(characterGreeting);
+
+            // Add session messages to conversation history
+            foreach (var sessionMessage in _sessionManager.GetCurrentSessionMessages())
+            {
+                _conversationHistory.Add(new ChatMessage
+                {
+                    Role = sessionMessage.Role,
+                    Content = sessionMessage.Content
+                });
+            }
+
+            // Auto-save session after loading
+            await _sessionManager.SaveCurrentSessionAsync();
+        }
+
         public bool GetConversationOnlyMode()
         {
             return _conversationOnlyMode;
@@ -293,6 +355,37 @@ namespace LocalChatAgent.Services
         public void SetConversationOnlyMode(bool enabled)
         {
             _conversationOnlyMode = enabled;
+        }
+
+        public void LoadSessionHistory(List<SessionMessage> sessionMessages)
+        {
+            // Clear existing conversation history but keep system message and character greeting
+            var systemMessage = _conversationHistory.FirstOrDefault(m => m.Role == "system");
+            var characterGreeting = _conversationHistory.Skip(1).FirstOrDefault(m => m.Role == "assistant");
+            
+            _conversationHistory.Clear();
+            
+            // Re-add system message
+            if (systemMessage != null)
+            {
+                _conversationHistory.Add(systemMessage);
+            }
+            
+            // Re-add character greeting if it exists
+            if (characterGreeting != null)
+            {
+                _conversationHistory.Add(characterGreeting);
+            }
+            
+            // Add session messages
+            foreach (var sessionMsg in sessionMessages)
+            {
+                _conversationHistory.Add(new ChatMessage
+                {
+                    Role = sessionMsg.Role,
+                    Content = sessionMsg.Content
+                });
+            }
         }
 
         private List<ChatMessage> GetMessagesForRequest()

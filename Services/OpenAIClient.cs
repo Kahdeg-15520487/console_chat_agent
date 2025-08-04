@@ -42,7 +42,7 @@ namespace LocalChatAgent.Services
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
                 var endpoint = $"{_config.BaseUrl.TrimEnd('/')}/chat/completions";
                 
-                Console.WriteLine($"LLM: Sending request to: {endpoint}");
+                // Console.WriteLine($"LLM: Sending request to: {endpoint}");
                 
                 var response = await _httpClient.PostAsync(endpoint, content, cancellationToken);
                 var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -80,7 +80,7 @@ namespace LocalChatAgent.Services
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             var endpoint = $"{_config.BaseUrl.TrimEnd('/')}/chat/completions";
             
-            Console.WriteLine($"LLM: Sending streaming request to: {endpoint}");
+            // Console.WriteLine($"LLM: Sending streaming request to: {endpoint}");
 
             using var request2 = new HttpRequestMessage(HttpMethod.Post, endpoint)
             {
@@ -109,7 +109,7 @@ namespace LocalChatAgent.Services
                     
                     if (data == "[DONE]")
                     {
-                        Console.WriteLine("LLM: Stream completed");
+                        // Stream completed - no need to show this in normal operation
                         break;
                     }
 
