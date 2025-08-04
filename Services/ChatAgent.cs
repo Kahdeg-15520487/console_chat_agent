@@ -18,6 +18,7 @@ namespace LocalChatAgent.Services
         private readonly ApiConfig _config;
         private readonly List<ChatMessage> _conversationHistory;
         private CharacterCard? _characterCard;
+        private bool _conversationOnlyMode = false;
 
         public ChatAgent(OpenAIClient openAIClient, ToolManager toolManager, ApiConfig config, CharacterCard? characterCard = null)
         {
@@ -93,11 +94,11 @@ namespace LocalChatAgent.Services
                 var request = new ChatRequest
                 {
                     Model = _config.Model,
-                    Messages = _conversationHistory.ToList(),
+                    Messages = GetMessagesForRequest(),
                     MaxTokens = _config.MaxTokens,
                     Temperature = _config.Temperature,
-                    Tools = _toolManager.GetAvailableTools(),
-                    ToolChoice = "auto"
+                    Tools = _conversationOnlyMode ? null : _toolManager.GetAvailableTools(),
+                    ToolChoice = _conversationOnlyMode ? null : "auto"
                 };
 
                 // Get the response
@@ -151,7 +152,7 @@ namespace LocalChatAgent.Services
             var request = new ChatRequest
             {
                 Model = _config.Model,
-                Messages = _conversationHistory.ToList(),
+                Messages = GetMessagesForRequest(),
                 MaxTokens = _config.MaxTokens,
                 Temperature = _config.Temperature,
                 Stream = true
@@ -282,6 +283,32 @@ namespace LocalChatAgent.Services
         {
             _characterCard = characterCard;
             ClearHistory(); // Rebuild conversation with new character
+        }
+
+        public bool GetConversationOnlyMode()
+        {
+            return _conversationOnlyMode;
+        }
+
+        public void SetConversationOnlyMode(bool enabled)
+        {
+            _conversationOnlyMode = enabled;
+        }
+
+        private List<ChatMessage> GetMessagesForRequest()
+        {
+            if (_conversationOnlyMode)
+            {
+                // Return only user and assistant messages (no system prompts, no tool calls)
+                return _conversationHistory
+                    .Where(m => (m.Role == "user" || m.Role == "assistant") && (m.ToolCalls == null || !m.ToolCalls.Any()))
+                    .ToList();
+            }
+            else
+            {
+                // Return all messages (default behavior)
+                return _conversationHistory.ToList();
+            }
         }
 
         public string GetCurrentSystemPrompt()

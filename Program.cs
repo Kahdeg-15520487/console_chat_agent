@@ -17,6 +17,7 @@ namespace LocalChatAgent
         private static ApiConfig? _apiConfig;
         private static ChatAgent? _chatAgent;
         private static bool _useStreaming = false;
+        private static bool _conversationOnlyMode = false;
         private static CancellationTokenSource? _currentRequestCancellation;
         private static List<string> _commandHistory = new List<string>();
         private static readonly string _historyFilePath = Path.Combine(
@@ -255,6 +256,9 @@ namespace LocalChatAgent
 
             // Initialize chat agent with character card
             _chatAgent = new ChatAgent(openAIClient, toolManager, _apiConfig, characterCard);
+            
+            // Set initial conversation-only mode state
+            _chatAgent.SetConversationOnlyMode(_conversationOnlyMode);
 
             Console.WriteLine("Available tools:");
             foreach (var toolName in toolManager.GetToolNames())
@@ -273,6 +277,7 @@ namespace LocalChatAgent
             Console.WriteLine("  /history   - Show conversation history with token counts");
             Console.WriteLine("  /commands  - Show recent command history");
             Console.WriteLine("  /stream    - Toggle streaming mode (current: " + (_useStreaming ? "ON" : "OFF") + ")");
+            Console.WriteLine("  /conversation - Toggle conversation-only mode (current: " + (_conversationOnlyMode ? "ON" : "OFF") + ")");
             Console.WriteLine("  /character - Show current character card info");
             Console.WriteLine("  /prompt    - Show current system prompt with token count");
             Console.WriteLine("  /exit      - Exit the application");
@@ -281,6 +286,11 @@ namespace LocalChatAgent
             Console.WriteLine("  Place character card PNG or JSON files in the 'characters' directory");
             Console.WriteLine("  Character cards define AI personality and behavior");
             Console.WriteLine("  Supported formats: PNG with embedded metadata, JSON files");
+            Console.WriteLine();
+            Console.WriteLine("Conversation Mode:");
+            Console.WriteLine("  Normal mode: LLM sees system prompts, tool calls, and full context");
+            Console.WriteLine("  Conversation-only mode: LLM sees only user/assistant messages (no tools, no system prompts)");
+            Console.WriteLine("  Use /conversation to toggle between modes");
             Console.WriteLine();
             Console.WriteLine("Hotkeys:");
             Console.WriteLine("  Ctrl+C     - Cancel current chat request");
@@ -655,6 +665,22 @@ namespace LocalChatAgent
                     if (_useStreaming)
                     {
                         Console.WriteLine("Note: Tool calls are not supported in streaming mode.");
+                    }
+                    Console.WriteLine();
+                    return Task.FromResult(false);
+
+                case "/conversation":
+                    _conversationOnlyMode = !_conversationOnlyMode;
+                    _chatAgent?.SetConversationOnlyMode(_conversationOnlyMode);
+                    Console.WriteLine($"Conversation-only mode is now {(_conversationOnlyMode ? "ON" : "OFF")}");
+                    if (_conversationOnlyMode)
+                    {
+                        Console.WriteLine("LLM will only see user and assistant messages (no system prompts, no tool calls).");
+                        Console.WriteLine("Tools are disabled in this mode.");
+                    }
+                    else
+                    {
+                        Console.WriteLine("LLM will see full conversation context including system prompts and tool calls.");
                     }
                     Console.WriteLine();
                     return Task.FromResult(false);
