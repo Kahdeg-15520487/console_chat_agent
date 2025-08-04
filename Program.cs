@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,6 +18,11 @@ namespace LocalChatAgent
         private static ChatAgent? _chatAgent;
         private static bool _useStreaming = false;
         private static CancellationTokenSource? _currentRequestCancellation;
+        private static List<string> _commandHistory = new List<string>();
+        private static readonly string _historyFilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), 
+            "LocalChatAgent", 
+            "command_history.json");
 
         private static void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
         {
@@ -42,6 +50,9 @@ namespace LocalChatAgent
 
             try
             {
+                // Load command history
+                LoadCommandHistory();
+
                 // Load configuration
                 if (!LoadConfiguration())
                 {
@@ -61,6 +72,11 @@ namespace LocalChatAgent
             catch (Exception ex)
             {
                 Console.WriteLine($"An error occurred: {ex.Message}");
+            }
+            finally
+            {
+                // Save command history on exit
+                SaveCommandHistory();
             }
         }
 
@@ -158,16 +174,203 @@ namespace LocalChatAgent
             Console.WriteLine("Commands:");
             Console.WriteLine("  /help      - Show this help message");
             Console.WriteLine("  /clear     - Clear conversation history");
+            Console.WriteLine("  /clearall  - Clear both conversation and command history");
             Console.WriteLine("  /history   - Show conversation history");
+            Console.WriteLine("  /commands  - Show recent command history");
             Console.WriteLine("  /stream    - Toggle streaming mode (current: " + (_useStreaming ? "ON" : "OFF") + ")");
             Console.WriteLine("  /exit      - Exit the application");
             Console.WriteLine();
             Console.WriteLine("Hotkeys:");
             Console.WriteLine("  Ctrl+C     - Cancel current chat request");
+            Console.WriteLine("  Up Arrow   - Navigate to previous command/input");
+            Console.WriteLine("  Down Arrow - Navigate to next command/input");
             Console.WriteLine();
             Console.WriteLine("You can ask questions and the agent will use tools when needed.");
             Console.WriteLine("Example: 'What's the weather like today?' or 'Calculate 15 * 23 + 47'");
             Console.WriteLine();
+        }
+
+        private static string? ReadLineWithHistory(string prompt)
+        {
+            Console.Write(prompt);
+            
+            var input = new StringBuilder();
+            var currentHistoryIndex = -1; // -1 means we're not navigating history
+            string? currentInput = null; // Store the current input when we start navigating history
+            
+            while (true)
+            {
+                var keyInfo = Console.ReadKey(true);
+                
+                switch (keyInfo.Key)
+                {
+                    case ConsoleKey.Enter:
+                        Console.WriteLine();
+                        var result = input.ToString();
+                        
+                        // Add non-empty inputs to history
+                        AddToHistory(result);
+                        
+                        return result;
+                        
+                    case ConsoleKey.UpArrow:
+                        if (_commandHistory.Count > 0)
+                        {
+                            // If we're not navigating history yet, store the current input
+                            if (currentHistoryIndex == -1)
+                            {
+                                currentInput = input.ToString();
+                                currentHistoryIndex = _commandHistory.Count - 1;
+                            }
+                            else if (currentHistoryIndex > 0)
+                            {
+                                currentHistoryIndex--;
+                            }
+                            
+                            // Clear current line and show history item
+                            ClearCurrentLine();
+                            Console.Write(prompt);
+                            input.Clear();
+                            input.Append(_commandHistory[currentHistoryIndex]);
+                            Console.Write(input.ToString());
+                        }
+                        break;
+                        
+                    case ConsoleKey.DownArrow:
+                        if (currentHistoryIndex != -1)
+                        {
+                            if (currentHistoryIndex < _commandHistory.Count - 1)
+                            {
+                                currentHistoryIndex++;
+                                
+                                // Clear current line and show history item
+                                ClearCurrentLine();
+                                Console.Write(prompt);
+                                input.Clear();
+                                input.Append(_commandHistory[currentHistoryIndex]);
+                                Console.Write(input.ToString());
+                            }
+                            else
+                            {
+                                // Back to current input
+                                currentHistoryIndex = -1;
+                                ClearCurrentLine();
+                                Console.Write(prompt);
+                                input.Clear();
+                                if (currentInput != null)
+                                {
+                                    input.Append(currentInput);
+                                    Console.Write(input.ToString());
+                                }
+                            }
+                        }
+                        break;
+                        
+                    case ConsoleKey.Backspace:
+                        if (input.Length > 0)
+                        {
+                            input.Remove(input.Length - 1, 1);
+                            Console.Write("\b \b");
+                            
+                            // Reset history navigation when user starts editing
+                            currentHistoryIndex = -1;
+                            currentInput = null;
+                        }
+                        break;
+                        
+                    case ConsoleKey.Escape:
+                        // Clear the current line
+                        ClearCurrentLine();
+                        Console.Write(prompt);
+                        input.Clear();
+                        currentHistoryIndex = -1;
+                        currentInput = null;
+                        break;
+                        
+                    default:
+                        // Handle regular character input
+                        if (!char.IsControl(keyInfo.KeyChar))
+                        {
+                            input.Append(keyInfo.KeyChar);
+                            Console.Write(keyInfo.KeyChar);
+                            
+                            // Reset history navigation when user starts editing
+                            currentHistoryIndex = -1;
+                            currentInput = null;
+                        }
+                        break;
+                }
+            }
+        }
+        
+        private static void ClearCurrentLine()
+        {
+            int currentLineCursor = Console.CursorTop;
+            Console.SetCursorPosition(0, Console.CursorTop);
+            Console.Write(new string(' ', Console.WindowWidth));
+            Console.SetCursorPosition(0, currentLineCursor);
+        }
+
+        private static void LoadCommandHistory()
+        {
+            try
+            {
+                if (File.Exists(_historyFilePath))
+                {
+                    var json = File.ReadAllText(_historyFilePath);
+                    var history = JsonSerializer.Deserialize<List<string>>(json);
+                    if (history != null)
+                    {
+                        _commandHistory = history;
+                        Console.WriteLine($"Loaded {_commandHistory.Count} commands from history.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Could not load command history: {ex.Message}");
+            }
+        }
+
+        private static void SaveCommandHistory()
+        {
+            try
+            {
+                // Create directory if it doesn't exist
+                var directory = Path.GetDirectoryName(_historyFilePath);
+                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                var json = JsonSerializer.Serialize(_commandHistory, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_historyFilePath, json);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Could not save command history: {ex.Message}");
+            }
+        }
+
+        private static void AddToHistory(string input)
+        {
+            if (!string.IsNullOrWhiteSpace(input))
+            {
+                // Remove duplicate if it's the same as the last entry
+                if (_commandHistory.Count == 0 || _commandHistory[_commandHistory.Count - 1] != input)
+                {
+                    _commandHistory.Add(input);
+                    
+                    // Keep history size manageable (last 500 commands for persistent storage)
+                    if (_commandHistory.Count > 500)
+                    {
+                        _commandHistory.RemoveAt(0);
+                    }
+                    
+                    // Save to file after each addition
+                    SaveCommandHistory();
+                }
+            }
         }
 
         private static async Task RunChatLoopAsync()
@@ -179,12 +382,19 @@ namespace LocalChatAgent
 
             while (true)
             {
-                if (!isInputRedirected)
+                string? input;
+                
+                if (isInputRedirected)
                 {
+                    // For piped input, use regular ReadLine
                     Console.Write("You: ");
+                    input = Console.ReadLine();
                 }
-
-                var input = Console.ReadLine();
+                else
+                {
+                    // For interactive input, use our custom reader with history
+                    input = ReadLineWithHistory("You: ");
+                }
 
                 // Handle null input (end of piped stream or Ctrl+C)
                 if (input == null)
@@ -276,6 +486,14 @@ namespace LocalChatAgent
                     Console.WriteLine();
                     return Task.FromResult(false);
 
+                case "/clearall":
+                    _chatAgent.ClearHistory();
+                    _commandHistory.Clear();
+                    SaveCommandHistory(); // Save the cleared history to file
+                    Console.WriteLine("Both conversation and command history cleared.");
+                    Console.WriteLine();
+                    return Task.FromResult(false);
+
                 case "/history":
                     var history = _chatAgent.GetConversationHistory();
                     Console.WriteLine("Conversation History:");
@@ -294,6 +512,29 @@ namespace LocalChatAgent
                                 Console.WriteLine($"  [Tool Call: {toolCall.Function.Name}]");
                             }
                         }
+                    }
+                    Console.WriteLine();
+                    return Task.FromResult(false);
+
+                case "/commands":
+                    Console.WriteLine("Command History:");
+                    Console.WriteLine("================");
+                    Console.WriteLine($"History file: {_historyFilePath}");
+                    Console.WriteLine($"Total commands: {_commandHistory.Count}");
+                    Console.WriteLine();
+                    
+                    if (_commandHistory.Count > 0)
+                    {
+                        Console.WriteLine("Recent commands (last 20):");
+                        var recentCommands = _commandHistory.Skip(Math.Max(0, _commandHistory.Count - 20)).ToArray();
+                        for (int i = 0; i < recentCommands.Length; i++)
+                        {
+                            Console.WriteLine($"  {_commandHistory.Count - recentCommands.Length + i + 1}: {recentCommands[i]}");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("No commands in history.");
                     }
                     Console.WriteLine();
                     return Task.FromResult(false);
