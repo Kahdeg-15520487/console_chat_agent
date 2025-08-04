@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using LocalChatAgent.Models;
 using LocalChatAgent.Services;
@@ -13,12 +14,31 @@ namespace LocalChatAgent
         private static ApiConfig? _apiConfig;
         private static ChatAgent? _chatAgent;
         private static bool _useStreaming = false;
+        private static CancellationTokenSource? _currentRequestCancellation;
+
+        private static void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
+        {
+            if (_currentRequestCancellation != null && !_currentRequestCancellation.Token.IsCancellationRequested)
+            {
+                // Cancel the current request
+                _currentRequestCancellation.Cancel();
+                e.Cancel = true; // Prevent the application from terminating
+            }
+            else
+            {
+                // No active request, allow normal termination
+                e.Cancel = false;
+            }
+        }
 
         static async Task Main(string[] args)
         {
             Console.WriteLine("Local Chat Agent - OpenAI Compatible");
             Console.WriteLine("=====================================");
             Console.WriteLine();
+
+            // Set up console cancel key handler
+            Console.CancelKeyPress += OnCancelKeyPress;
 
             try
             {
@@ -142,6 +162,9 @@ namespace LocalChatAgent
             Console.WriteLine("  /stream    - Toggle streaming mode (current: " + (_useStreaming ? "ON" : "OFF") + ")");
             Console.WriteLine("  /exit      - Exit the application");
             Console.WriteLine();
+            Console.WriteLine("Hotkeys:");
+            Console.WriteLine("  Ctrl+C     - Cancel current chat request");
+            Console.WriteLine();
             Console.WriteLine("You can ask questions and the agent will use tools when needed.");
             Console.WriteLine("Example: 'What's the weather like today?' or 'Calculate 15 * 23 + 47'");
             Console.WriteLine();
@@ -193,12 +216,15 @@ namespace LocalChatAgent
 
                 try
                 {
+                    // Create a new cancellation token for this request
+                    _currentRequestCancellation = new CancellationTokenSource();
+                    
                     Console.Write("Assistant: ");
                     
                     if (_useStreaming)
                     {
                         // Use streaming response
-                        await foreach (var chunk in _chatAgent.SendMessageStreamAsync(input))
+                        await foreach (var chunk in _chatAgent.SendMessageStreamAsync(input, _currentRequestCancellation.Token))
                         {
                             Console.Write(chunk);
                         }
@@ -207,16 +233,28 @@ namespace LocalChatAgent
                     }
                     else
                     {
-                        // Use regular response
-                        var response = await _chatAgent.SendMessageAsync(input);
+                        // Use regular response (we'll need to update ChatAgent to support cancellation for non-streaming too)
+                        var response = await _chatAgent.SendMessageAsync(input, _currentRequestCancellation.Token);
                         Console.WriteLine(response);
                         Console.WriteLine();
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("Request cancelled by user.");
+                    Console.WriteLine();
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error: {ex.Message}");
                     Console.WriteLine();
+                }
+                finally
+                {
+                    // Clean up the cancellation token
+                    _currentRequestCancellation?.Dispose();
+                    _currentRequestCancellation = null;
                 }
             }
         }

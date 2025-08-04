@@ -48,7 +48,7 @@ namespace LocalChatAgent.Services
             return basePrompt;
         }
 
-        public async Task<string> SendMessageAsync(string userMessage)
+        public async Task<string> SendMessageAsync(string userMessage, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -71,7 +71,7 @@ namespace LocalChatAgent.Services
                 };
 
                 // Get the response
-                var response = await _openAIClient.SendChatRequestAsync(request);
+                var response = await _openAIClient.SendChatRequestAsync(request, cancellationToken);
                 
                 if (response.Choices?.Any() != true)
                 {
@@ -87,7 +87,7 @@ namespace LocalChatAgent.Services
                 // Check if the assistant wants to use tools
                 if (assistantMessage.ToolCalls?.Any() == true)
                 {
-                    return await HandleToolCallsAsync(assistantMessage.ToolCalls);
+                    return await HandleToolCallsAsync(assistantMessage.ToolCalls, cancellationToken);
                 }
 
                 return assistantMessage.Content ?? "No content in response";
@@ -165,7 +165,7 @@ namespace LocalChatAgent.Services
             }
         }
 
-        private async Task<string> HandleToolCallsAsync(List<ToolCall> toolCalls)
+        private async Task<string> HandleToolCallsAsync(List<ToolCall> toolCalls, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -204,7 +204,7 @@ namespace LocalChatAgent.Services
                     ToolChoice = "auto"
                 };
 
-                var response = await _openAIClient.SendChatRequestAsync(request);
+                var response = await _openAIClient.SendChatRequestAsync(request, cancellationToken);
                 
                 if (response.Choices?.Any() != true)
                 {

@@ -29,7 +29,7 @@ namespace LocalChatAgent.Services
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "LocalChatAgent/1.0");
         }
 
-        public async Task<ChatResponse> SendChatRequestAsync(ChatRequest request)
+        public async Task<ChatResponse> SendChatRequestAsync(ChatRequest request, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -44,8 +44,8 @@ namespace LocalChatAgent.Services
                 
                 Console.WriteLine($"LLM: Sending request to: {endpoint}");
                 
-                var response = await _httpClient.PostAsync(endpoint, content);
-                var responseContent = await response.Content.ReadAsStringAsync();
+                var response = await _httpClient.PostAsync(endpoint, content, cancellationToken);
+                var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {
